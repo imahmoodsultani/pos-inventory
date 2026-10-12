@@ -16,9 +16,48 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 
+/**
+ * Origins Better Auth will accept a request from.
+ *
+ * Better Auth checks the request `Origin` against `baseURL` and rejects a mismatch as CSRF — a
+ * failure that surfaces as "sign-in just doesn't work" with no useful error. That bit us twice:
+ * once locally (`127.0.0.1` vs `localhost`) and once in production, where one Vercel deployment
+ * answers on THREE aliases:
+ *
+ *   pos-inventory-ochre.vercel.app                     ← the stable production alias
+ *   pos-inventory-<team>.vercel.app
+ *   pos-inventory-git-<branch>-<team>.vercel.app
+ *
+ * and every preview deployment invents another. Pinning `baseURL` to one of them means signing
+ * in from any other silently fails.
+ *
+ * The wildcard covers all of them without weakening anything meaningful: it is scoped to this
+ * project's own subdomain pattern on vercel.app, not to vercel.app at large.
+ */
+function trustedOrigins(): string[] {
+  const origins = new Set<string>();
+  if (process.env.BETTER_AUTH_URL) origins.add(process.env.BETTER_AUTH_URL);
+  // Vercel injects this per deployment, without a scheme.
+  if (process.env.VERCEL_URL) origins.add(`https://${process.env.VERCEL_URL}`);
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    origins.add(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
+  }
+  if (process.env.VERCEL) origins.add("https://pos-inventory-*.vercel.app");
+  return [...origins];
+}
+
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL,
+  /**
+   * Falls back to the deployment URL so a missing BETTER_AUTH_URL degrades to "works on this
+   * deployment" rather than "every sign-in fails as CSRF".
+   */
+  baseURL:
+    process.env.BETTER_AUTH_URL ??
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : undefined),
+  trustedOrigins: trustedOrigins(),
 
   database: drizzleAdapter(db, {
     provider: "pg",

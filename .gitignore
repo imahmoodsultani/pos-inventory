@@ -45,3 +45,6 @@ next-env.d.ts
 /playwright-report/
 /test-results/
 /.playwright/
+
+# One-time bootstrap output — read it, then delete it.
+PRODUCTION-OWNER-CREDENTIALS.txt
