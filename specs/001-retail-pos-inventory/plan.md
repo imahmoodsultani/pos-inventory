@@ -21,7 +21,9 @@ back to the batch total exactly.
 **Language/Version**: TypeScript 5.x on Node 22.12+ (Vitest 5 requires ^22.12, ^24, or >=26)
 **Primary Dependencies**: Next.js 16.4.0 (App Router, Cache Components, Turbopack), React 19.3.0,
 Drizzle ORM 0.45.4 + drizzle-kit 0.31.11, `pg` 8.23.1, Better Auth 1.7.7, Zod 4.6.5,
-Tailwind 4.3.3 + shadcn/ui CLI 4.21.4, TanStack Table 9.2.8
+Tailwind 4.3.3 + shadcn/ui CLI 4.21.4
+(TanStack Table was removed during implementation — see the note in
+`app/(app)/reports/margin/margin-table.tsx`)
 **Storage**: Neon Postgres 17 via Vercel Marketplace. Pooled `DATABASE_URL` at runtime (PgBouncer
 transaction mode), direct `DATABASE_URL_UNPOOLED` for migrations. Per-preview Neon branches.
 **Testing**: Vitest 5.0.3 (unit + integration), `@testcontainers/postgresql` 12.2.0 against

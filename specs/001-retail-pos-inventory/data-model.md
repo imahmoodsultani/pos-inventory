@@ -163,8 +163,14 @@ where `consumed = qty_received − qty_remaining` at the moment of correction. T
 of the cost change already attributed to sold units. Invariant C then becomes:
 
 ```
-Σ stock_movements.cost_minor = batches.total_cost_minor   (adjustments included)
+Σ stock_movements.cost_minor WHERE movement_type <> 'receipt'
+    = batches.total_cost_minor            (adjustments included)
 ```
+
+The `receipt` row is excluded: it carries the batch's full cost as the **inbound** side of the
+ledger, so summing it with the outbound rows gives `2 × total` for every depleted batch. Only the
+outbound movements — sales, write-offs, vendor returns, and FR-007a adjustments — are allocations
+*out of* the total.
 
 `stock_movements.qty_delta` has `CHECK (qty_delta <> 0)`, so a pure cost adjustment cannot be stored as
 a movement row under the current constraint. **Resolution**: relax the check to
@@ -336,7 +342,7 @@ retained_proceeds =
     (SELECT COALESCE(SUM(amount_minor), 0) FROM cash_events
       WHERE direction = 'in' AND source_type = 'sale')
   - (SELECT COALESCE(SUM(amount_minor), 0) FROM cash_events
-      WHERE direction = 'out' AND source_type IN ('customer_refund', 'withdrawal'))
+      WHERE direction = 'out' AND source_type IN ('sale_refund', 'withdrawal'))
   - (SELECT COALESCE(SUM(reinvested_minor), 0) FROM funding_allocations)
 ```
 

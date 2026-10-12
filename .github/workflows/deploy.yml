@@ -1,0 +1,63 @@
+# Production deploy with migrations (T103).
+#
+# ORDER IS THE WHOLE POINT: migrations run against the DIRECT (unpooled) endpoint BEFORE the new
+# build is promoted. Promoting first would put code live against a schema it does not have.
+#
+# `vercel rollback` reverts CODE but NOT SCHEMA, so every migration must be expand/contract —
+# additive, tolerated by the previous release. A destructive migration makes rollback impossible
+# exactly when you most need it.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never two deploys at once: a second run could promote while the first is still migrating.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Gate: never migrate a production database from a non-production run.
+      - name: Confirm this is a production deploy
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "Refusing to migrate production from ${{ github.ref }}"
+            exit 1
+          fi
+
+      - name: Apply migrations (direct endpoint, never pooled)
+        env:
+          # PgBouncer in transaction mode multiplexes backends between statements, so DDL that
+          # depends on session state behaves unpredictably through the pooled URL.
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: npx drizzle-kit migrate
+
+      - name: Build
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy the prebuilt output
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        # --prebuilt, or the build step above is silently discarded and Vercel rebuilds.
+        run: npx vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

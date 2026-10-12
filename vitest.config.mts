@@ -5,7 +5,11 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 
 // Vitest does not read tsconfig `paths`; the "@/..." alias has to be declared here too or the
 // test files resolve against node_modules and fail with "Cannot find package".
-const alias = { "@": root.replace(/\/$/, "") };
+const alias = {
+  "@": root.replace(/\/$/, ""),
+  // See tests/stubs/server-only.ts for why this is aliased rather than left alone.
+  "server-only": `${root}tests/stubs/server-only.ts`,
+};
 
 /**
  * Two projects with very different cost profiles (T006):
@@ -34,6 +38,10 @@ export default defineConfig({
           name: "integration",
           environment: "node",
           include: ["tests/integration/**/*.test.ts"],
+          // One shared container for the whole run; see tests/integration/global-setup.ts.
+          globalSetup: ["tests/integration/global-setup.ts"],
+          // Points lib/db at the shared container before any module is imported.
+          setupFiles: ["tests/integration/setup-env.ts"],
           testTimeout: 120_000,
           hookTimeout: 180_000,
           // A shared container plus guarded conditional UPDATEs means concurrent suites
