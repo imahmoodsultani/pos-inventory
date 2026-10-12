@@ -42,6 +42,31 @@ jobs:
             exit 1
           fi
 
+      # Checked BEFORE the first migration, not when each step happens to need its secret.
+      #
+      # Migrations run first and are not rolled back by `vercel rollback`. Discovering a missing
+      # VERCEL_TOKEN *after* migrating leaves production on a schema with no code to match it —
+      # the one ordering this workflow exists to prevent. An unset secret also arrives as the
+      # empty string, which drizzle-kit reports only as `url: ''`.
+      - name: Confirm the required secrets are present
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          missing=""
+          [ -n "$DATABASE_URL_UNPOOLED" ] || missing="$missing DATABASE_URL_UNPOOLED"
+          [ -n "$VERCEL_TOKEN" ] || missing="$missing VERCEL_TOKEN"
+          [ -n "$VERCEL_ORG_ID" ] || missing="$missing VERCEL_ORG_ID"
+          [ -n "$VERCEL_PROJECT_ID" ] || missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "Missing required secret(s):$missing"
+            echo "Set them on the 'production' environment of this repository."
+            echo "DATABASE_URL_UNPOOLED must be Neon's DIRECT endpoint, not the pooled one."
+            exit 1
+          fi
+
       - name: Apply migrations (direct endpoint, never pooled)
         env:
           # PgBouncer in transaction mode multiplexes backends between statements, so DDL that
@@ -49,9 +74,15 @@ jobs:
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: npx drizzle-kit migrate
 
+      # `.vercel/` is gitignored, so CI has no project linkage and `vercel pull` cannot know which
+      # project it is pulling. These two identify it. They are NOT credentials — they authorize
+      # nothing without VERCEL_TOKEN — but they are read from secrets anyway so the org id does
+      # not sit in a file that may one day be public.
       - name: Build
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           npx vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
           npx vercel build --prod --token="$VERCEL_TOKEN"
@@ -59,5 +90,7 @@ jobs:
       - name: Deploy the prebuilt output
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         # --prebuilt, or the build step above is silently discarded and Vercel rebuilds.
         run: npx vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
