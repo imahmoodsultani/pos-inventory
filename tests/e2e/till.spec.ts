@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
@@ -13,12 +12,9 @@ import { expect, test, type Page } from "@playwright/test";
  * appears in the repository or in a terminal transcript.
  */
 
-const env = Object.fromEntries(
-  readFileSync(".env.local", "utf8")
-    .split("\n")
-    .filter((l) => l && !l.startsWith("#") && l.includes("="))
-    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
-);
+import { readEnvLocal } from "./env";
+
+const env = readEnvLocal();
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto("/sign-in");

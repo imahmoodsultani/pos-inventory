@@ -365,11 +365,44 @@ per-grade totals equal the sum of the matching sale lines.
   accounts.
 - **FR-041b**: System MUST enforce role restrictions on the server for every request, so that hiding a
   figure in the interface is never the only barrier to seeing it.
-- **FR-042**: System MUST NOT permanently delete any sale, purchase, stock movement, or capital record;
-  corrections MUST be recorded as new reversing or adjusting entries.
+- **FR-042**: System MUST NOT permanently delete any sale, purchase, stock movement, or capital
+  record. For sales, purchases, and stock movements, corrections MUST be recorded as new reversing
+  or adjusting entries — those records are never rewritten. Capital records are the exception: they
+  MAY be corrected in place, and every such correction MUST be recorded in the edit audit log
+  (FR-045a) with the previous value, the new value, the acting user, and a reason.
 - **FR-043**: System MUST remain fully usable on a touch screen at tablet width for the sales flow.
 - **FR-044**: System MUST show understandable error messages that state what went wrong and what the
   owner can do, without exposing internal technical detail.
+
+#### Correcting saved records
+
+- **FR-045**: System MUST let an owner correct a vendor's name, phone, email, and notes, and a
+  quality grade's label and sort order, after creation and after batches already reference them.
+  The entry keeps its identity, so existing batches, sale-line attribution, and margin history
+  continue to point at the same vendor or grade. A vendor rename that collides with an existing
+  vendor name, case-insensitively, MUST be refused naming the conflict.
+- **FR-045a**: System MUST record every in-place edit of a stored record in an append-only edit
+  audit log capturing the record, the field, the previous value, the new value, the acting user,
+  the time, and a reason where one is required. The audit entry MUST be written in the same
+  transaction as the edit, so a change can never be saved without its audit trail. Passwords,
+  tokens, and other secrets MUST NOT appear in the log in any form — the entry records that the
+  field changed, without either value.
+- **FR-045b**: The edit audit log MUST NOT be editable or deletable, enforced by the database.
+- **FR-046**: System MUST let an owner correct a recorded capital event's amount, date, and note in
+  place. The correction MUST require a reason, MUST update the capital event and the cash event it
+  produced within one transaction, and MUST leave the SC-003 accounting identity holding exactly. A
+  correction that would drive cash on hand below zero MUST be refused naming the available balance,
+  in either direction — reducing a past injection can overdraw the till just as raising a
+  withdrawal can.
+- **FR-046a**: A capital event's direction — injection or withdrawal — MUST NOT be editable, and a
+  capital event MUST NOT be deletable. An entry recorded entirely in error is corrected to an
+  amount of zero effect, which keeps the entry and its reason in the history.
+- **FR-047**: System MUST let an owner correct another staff member's display name and email
+  address, and set a new password for them. Changing an email or resetting a password MUST end that
+  account's existing sessions immediately. A duplicate email MUST be refused naming the conflict.
+- **FR-048**: A product's unit of measure MUST NOT be editable after creation. Every recorded
+  quantity is a count in that unit, so changing it would reinterpret all existing quantities
+  without altering a single number.
 
 ### Key Entities
 

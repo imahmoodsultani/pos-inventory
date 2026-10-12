@@ -8,6 +8,20 @@
       "when": 1791550621366,
       "tag": "0000_calm_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791812671120,
+      "tag": "0001_plain_night_thrasher",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791812671121,
+      "tag": "0002_narrow_immutability_tiers",
+      "breakpoints": true
     }
   ]
 }

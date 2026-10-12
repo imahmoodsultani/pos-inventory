@@ -389,6 +389,42 @@ export const idempotencyKeys = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// 15. record_edits — the edit audit log (data-model §15)
+// ---------------------------------------------------------------------------
+
+/**
+ * What replaces immutability where a record became editable.
+ *
+ * Immutability answered "how did this figure come to be?" by refusing to let it change. Capital
+ * events are now correctable in place (FR-042, FR-046), so the question needs answering some other
+ * way, and this is it.
+ *
+ * ONE ROW PER FIELD CHANGED, grouped by `editGroup`. That keeps "every change ever made to this
+ * vendor's email" a plain WHERE rather than a JSON path expression, while a multi-field edit still
+ * reconstructs as one action.
+ */
+export const recordEdits = pgTable(
+  "record_edits",
+  {
+    id: id(),
+    tableName: text("table_name").notNull(),
+    // TEXT, not BIGINT: users.id is a Better Auth text id while everything else is bigint.
+    recordId: text("record_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    // NULL for a secret field — see the deny-list in lib/services/audit.ts — or where there was
+    // no prior value.
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    reason: text("reason"),
+    /** Shared by every row written in one edit. */
+    editGroup: text("edit_group").notNull(),
+    changedBy: text("changed_by").notNull(),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("record_edits_record_idx").on(t.tableName, t.recordId, t.changedAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type Batch = typeof batches.$inferSelect;
 export type StockMovement = typeof stockMovements.$inferSelect;
@@ -397,3 +433,4 @@ export type SaleLine = typeof saleLines.$inferSelect;
 export type CapitalEvent = typeof capitalEvents.$inferSelect;
 export type CashEvent = typeof cashEvents.$inferSelect;
 export type FundingAllocation = typeof fundingAllocations.$inferSelect;
+export type RecordEdit = typeof recordEdits.$inferSelect;

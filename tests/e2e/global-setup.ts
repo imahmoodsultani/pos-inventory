@@ -11,24 +11,16 @@
  * continue to hold.
  */
 
-import { readFileSync } from "node:fs";
 import { Pool } from "pg";
+
+import { readEnvLocal } from "./env";
 
 const TOP_UP_THRESHOLD = 25;
 const TOP_UP_QTY = 200;
 const TOP_UP_COST_MINOR = 20_000; // 100 per unit
 
-function env(): Record<string, string> {
-  return Object.fromEntries(
-    readFileSync(".env.local", "utf8")
-      .split("\n")
-      .filter((l) => l && !l.startsWith("#") && l.includes("="))
-      .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
-  );
-}
-
 export default async function globalSetup(): Promise<void> {
-  const connectionString = env().DATABASE_URL;
+  const connectionString = readEnvLocal().DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL missing from .env.local");
 
   const pool = new Pool({ connectionString, max: 1 });

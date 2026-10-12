@@ -4,10 +4,11 @@ import { Suspense } from "react";
 import { listProducts, listQualityGrades, listVendors } from "@/lib/dal/queries";
 import { requireOwner } from "@/lib/dal/session";
 
-import { createProductAction } from "./actions";
+import { createProductAction, updateProductAction } from "./actions";
 import { CatalogueForm } from "./catalogue-forms";
-import { createQualityGradeAction } from "../grades/actions";
-import { createVendorAction } from "../vendors/actions";
+import { EditableEntityList } from "./editable-entity-list";
+import { createQualityGradeAction, updateQualityGradeAction } from "../grades/actions";
+import { createVendorAction, updateVendorAction } from "../vendors/actions";
 
 export const instant = false;
 
@@ -141,39 +142,75 @@ async function Catalogue() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <EntityList
+        {/*
+          FR-045 — editing in place, not deactivate-and-recreate. Renaming a vendor must keep one
+          vendor: recreating would split their margin report across two rows for one supplier.
+        */}
+        <EditableEntityList
           title="Products"
-          items={products.map((p) => ({
+          idField="productId"
+          action={updateProductAction}
+          emptyNote="None yet."
+          // code and unitOfMeasure are absent: the code identifies the product to a scanner and
+          // the unit is fixed at creation (FR-048), since every quantity ever recorded is counted
+          // in it.
+          fields={[
+            { name: "name", label: "Name" },
+            { name: "reorderLevel", label: "Reorder level", type: "number" },
+          ]}
+          rows={products.map((p) => ({
             id: p.id,
             primary: p.name,
             secondary: `${p.code} · ${p.unitOfMeasure}`,
             inactive: !p.isActive,
+            values: { name: p.name, reorderLevel: p.reorderLevel },
           }))}
         />
-        <EntityList
+        <EditableEntityList
           title="Vendors"
-          items={vendors.map((v) => ({
+          idField="vendorId"
+          action={updateVendorAction}
+          emptyNote="None yet."
+          fields={[
+            { name: "name", label: "Name" },
+            { name: "phone", label: "Phone", clearable: true },
+            { name: "email", label: "Email", clearable: true },
+            { name: "notes", label: "Notes", clearable: true },
+          ]}
+          rows={vendors.map((v) => ({
             id: v.id,
             primary: v.name,
             secondary: v.phone ?? "",
             inactive: !v.isActive,
+            values: { name: v.name, phone: v.phone, email: v.email, notes: v.notes },
           }))}
         />
-        <EntityList
+        <EditableEntityList
           title="Grades"
-          items={grades.map((g) => ({
+          idField="gradeId"
+          action={updateQualityGradeAction}
+          emptyNote="None yet."
+          // `code` is absent for the same reason: it is what past sale lines were graded as, and
+          // changing it would relabel history.
+          fields={[
+            { name: "label", label: "Label" },
+            { name: "sortOrder", label: "Sort order", type: "number" },
+          ]}
+          rows={grades.map((g) => ({
             id: g.id,
             primary: `${g.code} — ${g.label}`,
             secondary: "",
             inactive: !g.isActive,
+            values: { label: g.label, sortOrder: g.sortOrder },
           }))}
         />
       </div>
 
       <p className="text-muted-foreground text-xs">
-        Catalogue entries are never deleted — doing so would orphan the cost attribution on every
-        batch and sale that references them. Deactivate instead: the entry disappears from new
-        receipts and stays in all history.
+        Correcting an entry updates it everywhere it is referenced, including past batches and
+        sales — a renamed vendor stays one vendor. Entries are never deleted, since that would
+        orphan the cost attribution on every batch and sale that references them. Deactivate
+        instead: the entry disappears from new receipts and stays in all history.
       </p>
     </>
   );
@@ -187,39 +224,5 @@ function Step({ done, children }: { done: boolean; children: React.ReactNode }) 
       </span>{" "}
       {children}
     </li>
-  );
-}
-
-function EntityList({
-  title,
-  items,
-}: {
-  title: string;
-  items: Array<{ id: number; primary: string; secondary: string; inactive: boolean }>;
-}) {
-  return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-medium">
-        {title} <span className="text-muted-foreground">({items.length})</span>
-      </h2>
-      {items.length === 0 ? (
-        <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs">
-          None yet.
-        </p>
-      ) : (
-        <ul className="divide-y rounded-lg border text-sm">
-          {items.map((item) => (
-            <li key={item.id} className="px-3 py-2">
-              <span className={item.inactive ? "text-muted-foreground line-through" : ""}>
-                {item.primary}
-              </span>
-              {item.secondary ? (
-                <span className="text-muted-foreground block text-xs">{item.secondary}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
   );
 }

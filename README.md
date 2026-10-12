@@ -74,10 +74,26 @@ and decided — see `specs/001-retail-pos-inventory/research.md`. Do not "simpli
 - Oversell is prevented by the **guarded conditional UPDATE** (`WHERE id = ? AND qty_remaining >= ?`,
   checking `rowCount === 0`). `CHECK (qty_remaining >= 0)` is a **backstop**; SQLSTATE 23514 reaching
   a caller is a bug.
-- `stock_movements`, `capital_events`, and `cash_events` are **append-only by trigger**.
-  `sales`, `sale_lines`, `batches`, and `funding_allocations` are **delete-protected only** —
-  their columns legitimately advance.
 - Every mutation takes an `idempotencyKey` first, claimed **inside the business transaction**.
+
+### What is editable, and what is not
+
+Enforced by trigger, not by the service layer — a database rule holds for code nobody has written
+yet. The tiers below mirror `drizzle/0000_*.sql` and `drizzle/0002_narrow_immutability_tiers.sql`.
+
+| Table | Update | Delete | Why |
+|---|---|---|---|
+| `stock_movements` | ✗ | ✗ | The ledger invariant A reconstructs stock from. Corrections are **reversing rows**. |
+| `record_edits` | ✗ | ✗ | An audit trail that can be rewritten answers nothing. |
+| `cash_events` | **source-conditional** | ✗ | Only `capital_injection` and `withdrawal` rows may be amended, and never their `source_type`/`source_id`. A sale's takings are a record of what happened at the till. |
+| `capital_events` | ✓ | ✗ | Correctable in place (FR-046); the paired cash row moves in the same transaction. An entry made in error is corrected with its reason kept, never removed. |
+| `sales`, `sale_lines`, `batches`, `funding_allocations` | ✓ | ✗ | Delete-protected only — their columns legitimately advance (`qty_remaining` falls as stock sells). |
+| `products`, `vendors`, `quality_grades` | ✓ | ✗ | Renaming must keep **one** entity: recreating would split a supplier's margin report across two rows. `unit_of_measure` and a grade's `code` are fixed — history is counted and graded in them. |
+| `users` | ✓ | ✗ | Name and sign-in email are correctable; an email change ends that user's sessions. Accounts are deactivated, never deleted — their name stays on every sale they recorded. |
+
+Every edit above writes to `record_edits` in the **same transaction** as the change, so a change
+cannot be saved without its audit trail. Password values are never stored there — only the fact
+that a reset happened, by whom, and when.
 
 ### Next.js 16
 

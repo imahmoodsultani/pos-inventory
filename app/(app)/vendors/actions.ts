@@ -6,7 +6,12 @@ import { z } from "zod";
 
 import { tags } from "@/lib/cache-tags";
 import { defineAction } from "@/lib/services/action-wrapper";
-import { createVendor, deactivateVendor, deleteVendor } from "@/lib/services/catalogue";
+import {
+  createVendor,
+  deactivateVendor,
+  deleteVendor,
+  updateVendor,
+} from "@/lib/services/catalogue";
 
 export const createVendorAction = defineAction({
   name: "createVendor",
@@ -21,6 +26,21 @@ export const createVendorAction = defineAction({
   }),
   tags: () => [tags.catalogue],
   handler: ({ tx, user, input }) => createVendor(tx, user.id, input),
+});
+
+/** FR-045 — correcting a vendor after creation, including when batches reference it. */
+export const updateVendorAction = defineAction({
+  name: "updateVendor",
+  role: "owner",
+  schema: z.object({
+    vendorId: z.number().int().positive(),
+    name: z.string().trim().min(1, { error: "A vendor name is required." }).max(160).optional(),
+    phone: z.string().trim().max(40).nullable().optional(),
+    email: z.email({ error: "That does not look like an email address." }).nullable().optional(),
+    notes: z.string().trim().max(1000).nullable().optional(),
+  }),
+  tags: () => [tags.catalogue, tags.stock],
+  handler: ({ tx, user, input }) => updateVendor(tx, user.id, input),
 });
 
 export const deactivateVendorAction = defineAction({

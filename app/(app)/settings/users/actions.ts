@@ -10,6 +10,7 @@ import {
   resetUserPassword,
   setUserActive,
   setUserRole,
+  updateStaffDetails,
 } from "@/lib/services/users";
 
 // Matches lib/auth/config.ts. Enforced here too so the error is a field error rather than an
@@ -31,6 +32,18 @@ export const createStaffUserAction = defineAction({
     role,
   }),
   handler: ({ tx, user, input }) => createStaffUser(tx, user.id, input),
+});
+
+/** FR-047 — correcting a staff member's name or sign-in email after the account exists. */
+export const updateStaffDetailsAction = defineAction({
+  name: "updateStaffDetails",
+  role: "owner",
+  schema: z.object({
+    userId: z.string().min(1),
+    name: z.string().trim().min(1, { error: "A name is required." }).max(160).optional(),
+    email: z.email({ error: "That does not look like an email address." }).optional(),
+  }),
+  handler: ({ tx, user, input }) => updateStaffDetails(tx, user.id, input),
 });
 
 export const setUserActiveAction = defineAction({

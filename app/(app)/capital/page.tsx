@@ -4,9 +4,15 @@ import { db } from "@/lib/db";
 import type { Tx } from "@/lib/db";
 import { requireOwner } from "@/lib/dal/session";
 import { formatMinor } from "@/lib/format";
+import { getEditHistory } from "@/lib/services/audit";
 import { getCashOnHandMinor, listCapitalEvents } from "@/lib/services/capital";
 
-import { recordCapitalInjectionAction, recordWithdrawalAction } from "./actions";
+import {
+  correctCapitalEventAction,
+  recordCapitalInjectionAction,
+  recordWithdrawalAction,
+} from "./actions";
+import { CapitalHistory } from "./capital-history";
 import { CapitalForm } from "./capital-forms";
 
 export const instant = false;
@@ -31,10 +37,30 @@ export default async function CapitalPage() {
 }
 
 async function CapitalPanels() {
-  const [cashOnHandMinor, events] = await Promise.all([
+  const [cashOnHandMinor, rawEvents] = await Promise.all([
     db.transaction((tx) => getCashOnHandMinor(tx as Tx)),
     db.transaction((tx) => listCapitalEvents(tx as Tx)),
   ]);
+
+  // Edit history per entry, so a corrected figure reads as corrected rather than as though it had
+  // always been that value.
+  const events = await Promise.all(
+    rawEvents.map(async (e) => ({
+      id: e.id,
+      eventType: e.eventType,
+      amountMinor: e.amountMinor,
+      occurredAt: e.occurredAt.toISOString(),
+      note: e.note,
+      edits: (await getEditHistory(db, "capital_events", e.id)).map((h) => ({
+        id: h.id,
+        fieldName: h.fieldName,
+        oldValue: h.oldValue,
+        newValue: h.newValue,
+        reason: h.reason,
+        changedAt: h.changedAt.toISOString(),
+      })),
+    })),
+  );
 
   return (
     <>
@@ -64,36 +90,11 @@ async function CapitalPanels() {
 
       <section className="space-y-2">
         <h2 className="font-medium">History</h2>
-        {events.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            Nothing recorded yet. Put money in above to get started.
-          </p>
-        ) : (
-          <ul className="divide-y rounded-lg border">
-            {events.map((e) => (
-              <li key={e.id} className="flex items-baseline justify-between gap-4 px-4 py-2">
-                <span className="text-sm">
-                  <span className="font-medium capitalize">{e.eventType}</span>
-                  <span className="text-muted-foreground">
-                    {" · "}
-                    {e.occurredAt.toLocaleDateString()}
-                  </span>
-                  {e.note ? (
-                    <span className="text-muted-foreground block text-xs">{e.note}</span>
-                  ) : null}
-                </span>
-                <span
-                  className={`tabular-nums ${
-                    e.eventType === "withdrawal" ? "text-destructive" : ""
-                  }`}
-                >
-                  {e.eventType === "withdrawal" ? "−" : "+"}
-                  {formatMinor(e.amountMinor)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <p className="text-muted-foreground text-sm">
+          A corrected entry shows what it was before. Entries are never deleted — an entry made
+          entirely in error is corrected and its reason kept.
+        </p>
+        <CapitalHistory events={events} correctAction={correctCapitalEventAction} />
       </section>
     </>
   );

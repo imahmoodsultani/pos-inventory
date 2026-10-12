@@ -72,6 +72,7 @@ export async function distinctConnection(): Promise<TestDb> {
 
 /** Tables in dependency order; TRUNCATE ... CASCADE also bypasses the append-only triggers. */
 const TRUNCATABLE = [
+  "record_edits",
   "stock_movements",
   "sale_lines",
   "sales",

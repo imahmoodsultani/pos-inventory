@@ -9,10 +9,11 @@ import "server-only";
  * and breaks the SC-003 identity on the very first purchase.
  */
 
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import type { Tx } from "@/lib/db";
 import { capitalEvents, cashEvents } from "@/lib/db/schema";
+import { diffFields, recordEditsFor } from "@/lib/services/audit";
 import { DomainError } from "@/lib/services/domain-error";
 import { messages } from "@/lib/types/action-result";
 
@@ -145,6 +146,120 @@ export async function recordWithdrawal(
   });
 
   return summarise(tx, event.id);
+}
+
+export type CorrectCapitalEventInput = {
+  eventId: number;
+  amountMinor: number;
+  occurredAt: Date;
+  note?: string | null;
+  reason: string;
+};
+
+/**
+ * Correct a capital event in place (FR-046, FR-046a).
+ *
+ * ──────────────────────────────────────────────────────────────────────────────────────────
+ * A CAPITAL EVENT AND ITS CASH EVENT ARE ONE BUSINESS FACT IN TWO ROWS.
+ *
+ * Capital invested is summed from `capital_events`; cash on hand from `cash_events`. Correcting
+ * one without the other breaks the SC-003 identity immediately and silently. Both are therefore
+ * updated here, in the caller's transaction, or neither is.
+ *
+ * `eventType` is absent from the input by design (FR-046a). Flipping an injection into a
+ * withdrawal reverses the meaning of the entry entirely; correcting to zero effect and recording
+ * the right entry separately is clearer and keeps the mistake visible.
+ * ──────────────────────────────────────────────────────────────────────────────────────────
+ */
+export async function correctCapitalEvent(
+  tx: Tx,
+  actor: Actor,
+  input: CorrectCapitalEventInput,
+): Promise<CapitalResult> {
+  if (!input.reason?.trim()) {
+    throw new DomainError("VALIDATION", "Say why this entry is being corrected.", {
+      reason: ["Required"],
+    });
+  }
+  if (input.amountMinor <= 0) {
+    // A CHECK constraint enforces this too; the friendly message is here.
+    throw new DomainError(
+      "VALIDATION",
+      "A capital entry must be more than zero. To cancel one entirely, correct it to the " +
+        "smallest amount and record the reason.",
+      { amountMinor: ["Must be greater than zero"] },
+    );
+  }
+
+  const [existing] = await tx
+    .select()
+    .from(capitalEvents)
+    .where(eq(capitalEvents.id, input.eventId))
+    .limit(1);
+  if (!existing) throw new DomainError("NOT_FOUND", "That capital entry does not exist.");
+
+  /**
+   * Serialise against other debits while the balance is read and written (FR-031).
+   *
+   * `pg_advisory_xact_lock`, never the session-scoped variant — that one leaks permanently under
+   * PgBouncer, which multiplexes sessions between transactions.
+   */
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('cash_ledger'))`);
+
+  const balance = await getCashOnHandMinor(tx);
+
+  /**
+   * How this correction moves cash.
+   *
+   * Both directions can overdraw, which is the non-obvious part: REDUCING a past injection takes
+   * money out of the till just as surely as raising a withdrawal does, because the money that
+   * arrived may already have been spent on stock.
+   */
+  const difference = input.amountMinor - existing.amountMinor;
+  const cashDelta = existing.eventType === "injection" ? difference : -difference;
+  const projected = balance + cashDelta;
+
+  if (projected < 0) {
+    const limit = existing.amountMinor + (existing.eventType === "injection" ? -balance : balance);
+    throw new DomainError(
+      "INSUFFICIENT_CASH",
+      `That correction would leave cash on hand at ${projected} (minor units). ` +
+        `Cash available is ${balance}. The furthest this entry can move is to ${limit}.`,
+      { amountMinor: ["Would overdraw the till"] },
+    );
+  }
+
+  const patch = {
+    amountMinor: input.amountMinor,
+    occurredAt: input.occurredAt,
+    note: input.note ?? null,
+  };
+  const changes = diffFields(existing as unknown as Record<string, unknown>, patch);
+
+  if (changes.length === 0) {
+    return summarise(tx, input.eventId);
+  }
+
+  await tx.update(capitalEvents).set(patch).where(eq(capitalEvents.id, input.eventId));
+
+  // The paired cash row. Its source_type and source_id are immutable by trigger, so only the
+  // amount and date move — the row stays attached to this same business event.
+  const sourceType = existing.eventType === "injection" ? "capital_injection" : "withdrawal";
+  await tx
+    .update(cashEvents)
+    .set({ amountMinor: input.amountMinor, occurredAt: input.occurredAt })
+    .where(
+      and(eq(cashEvents.sourceType, sourceType), eq(cashEvents.sourceId, input.eventId)),
+    );
+
+  await recordEditsFor(tx, actor, {
+    tableName: "capital_events",
+    recordId: input.eventId,
+    reason: input.reason.trim(),
+    changes,
+  });
+
+  return summarise(tx, input.eventId);
 }
 
 async function summarise(tx: Tx, eventId: number): Promise<CapitalResult> {

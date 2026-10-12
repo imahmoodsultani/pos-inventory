@@ -234,8 +234,19 @@ have columns that legitimately advance.
 
 | Tier | Tables | Trigger |
 |---|---|---|
-| Fully immutable | `stock_movements`, `capital_events`, `cash_events` | `BEFORE UPDATE OR DELETE` |
-| Delete-protected only | `sales`, `sale_lines`, `batches`, `funding_allocations` | `BEFORE DELETE` |
+| Fully immutable | `stock_movements`, `record_edits` | `BEFORE UPDATE OR DELETE` |
+| Source-conditional | `cash_events` | `BEFORE UPDATE OR DELETE`, permitting `UPDATE` only when `source_type IN ('capital_injection','withdrawal')` |
+| Delete-protected only | `sales`, `sale_lines`, `batches`, `funding_allocations`, `capital_events` | `BEFORE DELETE` |
+
+> ⚠️ **`capital_events` moved out of the fully-immutable tier (FR-042, FR-046).** An owner can
+> mistype an injection, and with no correction path the figure was wrong forever. The event and the
+> `cash_events` row it produced are now corrected together in one transaction, and the change is
+> recorded in `record_edits` (§15). Deletion is still forbidden.
+>
+> `cash_events` is conditional rather than open: a capital-sourced row may be amended as part of
+> that correction, while sale takings, customer refunds, purchase payments, vendor refunds and cost
+> adjustments still raise. That boundary is what keeps a sale's recorded takings a record of what
+> happened at the till, and it is asserted directly in the integration suite rather than trusted.
 
 `sales` and `sale_lines` are not fully immutable: `sales.status`, `sales.voided_*`, and
 `sale_lines.qty_returned` advance as returns and voids are recorded (§13). `batches` is likewise
@@ -502,3 +513,40 @@ columns — hiding them client-side is not a boundary (FR-041b).
 The till's batch picker therefore exposes only vendor, grade, `qty_remaining`, and `received_at`
 (FR-018a) — which is precisely why the explicit-selection decision (FR-018) and the role decision
 (FR-041) must be designed together.
+
+---
+
+## 15. `record_edits` — the edit audit log (FR-045a, FR-045b)
+
+Immutability answered "how did this figure come to be?" by refusing to let it change. Where a record
+is now editable, this table answers it instead.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `BIGINT` IDENTITY PK | |
+| `table_name` | `TEXT` NOT NULL | the record's table |
+| `record_id` | `TEXT` NOT NULL | text, because `users.id` is TEXT and the rest are BIGINT |
+| `field_name` | `TEXT` NOT NULL | |
+| `old_value` | `TEXT` NULL | NULL for a secret field, or where there was no prior value |
+| `new_value` | `TEXT` NULL | NULL for a secret field |
+| `reason` | `TEXT` NULL | required by the service for capital corrections |
+| `edit_group` | `TEXT` NOT NULL | shared by every row written in one edit |
+| `changed_by` | `TEXT` NOT NULL → users | FR-032 |
+| `changed_at` | `TIMESTAMPTZ` NOT NULL DEFAULT now() | |
+
+```sql
+CREATE INDEX ON record_edits (table_name, record_id, changed_at DESC);
+
+CREATE TRIGGER record_edits_append_only BEFORE UPDATE OR DELETE ON record_edits
+  FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+```
+
+**One row per field changed**, grouped by `edit_group`, so "the owner changed the name and the email
+in one action" reconstructs as one edit rather than two unrelated events — while "every change ever
+made to this vendor's email" stays a plain `WHERE` rather than a JSON path expression.
+
+**Secrets are never stored.** A deny-list of field names (`password`, `token`, `secret`) records that
+the field changed with both values NULL. A deny-list rather than an allow-list because new non-secret
+fields appear constantly and new secret fields rarely, so forgetting to update it leaks nothing.
+
+**Written in the same transaction as the edit**, so a change cannot be saved without its audit trail.

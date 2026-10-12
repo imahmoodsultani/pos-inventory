@@ -35,7 +35,7 @@ transaction mode), direct `DATABASE_URL_UNPOOLED` for migrations. Per-preview Ne
 **Constraints**: Touch-usable at ≤1024px for the sales flow; exact-to-the-minor-unit accounting identity
 with zero rounding drift (SC-003); stock must never go negative (SC-007)
 **Scale/Scope**: Single store, single currency, 1 owner + a handful of salespeople, 5 user stories,
-55 functional requirements, 11 entities
+62 functional requirements, 12 entities
 
 All unknowns resolved in [research.md](./research.md). **No NEEDS CLARIFICATION remain.**
 
@@ -77,7 +77,7 @@ recording:
 ```text
 specs/001-retail-pos-inventory/
 ├── plan.md              # This file
-├── spec.md              # Feature specification (55 FRs, 5 user stories)
+├── spec.md              # Feature specification (62 FRs, 5 user stories)
 ├── research.md          # Phase 0 — 12 technology decisions
 ├── data-model.md        # Phase 1 — 11 entities, 3 invariants
 ├── quickstart.md        # Phase 1 — setup, smoke path, pitfalls

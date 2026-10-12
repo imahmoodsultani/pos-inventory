@@ -6,7 +6,11 @@ import { z } from "zod";
 
 import { tags } from "@/lib/cache-tags";
 import { defineAction } from "@/lib/services/action-wrapper";
-import { createQualityGrade, deleteQualityGrade } from "@/lib/services/catalogue";
+import {
+  createQualityGrade,
+  deleteQualityGrade,
+  updateQualityGrade,
+} from "@/lib/services/catalogue";
 
 export const createQualityGradeAction = defineAction({
   name: "createQualityGrade",
@@ -19,6 +23,22 @@ export const createQualityGradeAction = defineAction({
   }),
   tags: () => [tags.catalogue],
   handler: ({ tx, user, input }) => createQualityGrade(tx, user.id, input),
+});
+
+/**
+ * FR-045 — label and sort order only. `code` is absent by design: it appears against historical
+ * sale lines, and changing it would relabel what past sales were graded as.
+ */
+export const updateQualityGradeAction = defineAction({
+  name: "updateQualityGrade",
+  role: "owner",
+  schema: z.object({
+    gradeId: z.number().int().positive(),
+    label: z.string().trim().min(1, { error: "A label is required." }).max(80).optional(),
+    sortOrder: z.number().int().nonnegative().optional(),
+  }),
+  tags: () => [tags.catalogue],
+  handler: ({ tx, user, input }) => updateQualityGrade(tx, user.id, input),
 });
 
 /** Always CONFLICT (FR-004) — see the note on deleteProductAction. */

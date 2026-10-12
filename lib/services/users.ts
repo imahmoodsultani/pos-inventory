@@ -20,6 +20,7 @@ import { and, eq, ne } from "drizzle-orm";
 import { auth } from "@/lib/auth/config";
 import type { Tx } from "@/lib/db";
 import { sessions, users } from "@/lib/db/schema";
+import { diffFields, recordEditsFor } from "@/lib/services/audit";
 import { DomainError } from "@/lib/services/domain-error";
 
 export type Role = "owner" | "salesperson";
@@ -82,6 +83,67 @@ export async function createStaffUser(
   }
 
   return { userId: created.id };
+}
+
+/**
+ * Correct a staff member's name or email (FR-047).
+ *
+ * The email is the sign-in identifier, so changing it is not cosmetic: whoever holds the old
+ * address can no longer sign in, and whoever holds the new one now can. Existing sessions are
+ * therefore ended — the same reasoning as a password reset. An owner correcting their OWN typo
+ * signs in again immediately with the corrected address, which is the point.
+ */
+export async function updateStaffDetails(
+  tx: Tx,
+  actor: string,
+  input: { userId: string; name?: string; email?: string },
+): Promise<{ userId: string; signedOut: boolean }> {
+  const [target] = await tx.select().from(users).where(eq(users.id, input.userId)).limit(1);
+  if (!target) throw new DomainError("NOT_FOUND", "That account does not exist.");
+
+  const email = input.email?.toLowerCase();
+
+  if (email !== undefined && email !== target.email) {
+    const clash = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.email, email), ne(users.id, input.userId)))
+      .limit(1);
+
+    if (clash.length > 0) {
+      throw new DomainError("CONFLICT", "Another account already uses that email address.", {
+        email: ["Already in use"],
+      });
+    }
+  }
+
+  const changes = diffFields(
+    { name: target.name, email: target.email },
+    { name: input.name, email },
+  );
+
+  if (changes.length === 0) return { userId: input.userId, signedOut: false };
+
+  await tx
+    .update(users)
+    .set({
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(email === undefined ? {} : { email }),
+    })
+    .where(eq(users.id, input.userId));
+
+  await recordEditsFor(tx, actor, {
+    tableName: "users",
+    recordId: input.userId,
+    changes,
+  });
+
+  const emailChanged = changes.some((c) => c.field === "email");
+  if (emailChanged) {
+    await tx.delete(sessions).where(eq(sessions.userId, input.userId));
+  }
+
+  return { userId: input.userId, signedOut: emailChanged };
 }
 
 export async function setUserActive(
@@ -148,14 +210,26 @@ export async function setUserRole(
 
 export async function resetUserPassword(
   tx: Tx,
-  _actor: string,
+  actor: string,
   input: { userId: string; password: string },
 ): Promise<{ userId: string }> {
   const [target] = await tx.select().from(users).where(eq(users.id, input.userId)).limit(1);
   if (!target) throw new DomainError("NOT_FOUND", "That account does not exist.");
 
   const ctx = await auth.$context;
-  await ctx.internalAdapter.updatePassword(input.userId, input.password);
+
+  // `updatePassword` writes the string it is given VERBATIM — it does NOT hash. Passing the raw
+  // password stores it in plain text AND leaves the account unable to sign in, because verification
+  // compares against a hash. The same trap as `createUser` not making a credential account.
+  await ctx.internalAdapter.updatePassword(input.userId, await ctx.password.hash(input.password));
+
+  // Records THAT the password changed and who changed it, never either value — `isSecretField`
+  // nulls both sides. The owner needs to see a reset happened; nobody needs to see what it was.
+  await recordEditsFor(tx, actor, {
+    tableName: "users",
+    recordId: input.userId,
+    changes: [{ field: "password", from: null, to: null }],
+  });
 
   // Every existing session is invalidated: a password reset usually means the old one is
   // compromised or the person has left, and leaving their sessions live defeats the point.

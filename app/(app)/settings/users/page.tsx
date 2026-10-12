@@ -5,7 +5,12 @@ import type { Tx } from "@/lib/db";
 import { requireOwner } from "@/lib/dal/session";
 import { listStaff } from "@/lib/services/users";
 
-import { createStaffUserAction, setUserActiveAction } from "./actions";
+import {
+  createStaffUserAction,
+  resetUserPasswordAction,
+  setUserActiveAction,
+  updateStaffDetailsAction,
+} from "./actions";
 import { StaffForm, StaffList } from "./staff-ui";
 
 export const instant = false;
@@ -39,6 +44,8 @@ async function Staff({ currentUserId }: { currentUserId: string }) {
       <StaffList
         currentUserId={currentUserId}
         setActive={setUserActiveAction}
+        updateDetails={updateStaffDetailsAction}
+        resetPassword={resetUserPasswordAction}
         staff={staff.map((s) => ({
           id: s.id,
           email: s.email,

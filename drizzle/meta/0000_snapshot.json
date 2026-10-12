@@ -180,7 +180,11 @@
           "name": "total_cost_minor",
           "type": "bigint",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "generated": {
+            "as": "goods_cost_minor + landed_cost_minor",
+            "type": "stored"
+          }
         },
         "is_cost_corrected": {
           "name": "is_cost_corrected",

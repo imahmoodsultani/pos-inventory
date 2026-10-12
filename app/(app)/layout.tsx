@@ -56,6 +56,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               <Link href="/inventory/stock" className="hover:underline">
                 Stock
               </Link>
+              <Link href="/inventory/count" className="hover:underline">
+                Count
+              </Link>
               <Link href="/capital" className="hover:underline">
                 Capital
               </Link>

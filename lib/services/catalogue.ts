@@ -13,6 +13,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { Tx } from "@/lib/db";
 import { batches, products, qualityGrades, saleLines, vendors } from "@/lib/db/schema";
+import { diffFields, recordEditsFor } from "@/lib/services/audit";
 import { DomainError } from "@/lib/services/domain-error";
 
 type Actor = string;
@@ -45,7 +46,7 @@ export async function createProduct(
 
 export async function updateProduct(
   tx: Tx,
-  _actor: Actor,
+  actor: Actor,
   input: { productId: number; name?: string; reorderLevel?: number },
 ): Promise<{ productId: number }> {
   const patch: Record<string, unknown> = {};
@@ -58,14 +59,24 @@ export async function updateProduct(
 
   // unit_of_measure is deliberately NOT updatable. Changing it after units exist would silently
   // reinterpret every quantity already recorded against this product.
-  const updated = await tx
-    .update(products)
-    .set(patch)
+  const [existing] = await tx
+    .select()
+    .from(products)
     .where(eq(products.id, input.productId))
-    .returning({ id: products.id });
+    .limit(1);
+  if (!existing) throw new DomainError("NOT_FOUND", "That product does not exist.");
 
-  if (updated.length === 0) throw new DomainError("NOT_FOUND", "That product does not exist.");
-  return { productId: updated[0].id };
+  const changes = diffFields(existing as unknown as Record<string, unknown>, patch);
+  if (changes.length === 0) return { productId: input.productId };
+
+  await tx.update(products).set(patch).where(eq(products.id, input.productId));
+  await recordEditsFor(tx, actor, {
+    tableName: "products",
+    recordId: input.productId,
+    changes,
+  });
+
+  return { productId: input.productId };
 }
 
 export async function deactivateProduct(
@@ -136,6 +147,113 @@ export async function createVendor(
     })
     .returning({ id: vendors.id });
   return { vendorId: row.id };
+}
+
+/**
+ * Correct a vendor's details after creation (FR-045).
+ *
+ * The vendor keeps its identity, so every batch, frozen sale-line attribution and margin row
+ * continues to point at the same vendor. That is the whole reason this exists rather than
+ * "deactivate and recreate" — recreating splits one supplier's history into two.
+ */
+export async function updateVendor(
+  tx: Tx,
+  actor: Actor,
+  input: {
+    vendorId: number;
+    name?: string;
+    phone?: string | null;
+    email?: string | null;
+    notes?: string | null;
+  },
+): Promise<{ vendorId: number }> {
+  const [existing] = await tx
+    .select()
+    .from(vendors)
+    .where(eq(vendors.id, input.vendorId))
+    .limit(1);
+  if (!existing) throw new DomainError("NOT_FOUND", "That vendor does not exist.");
+
+  if (input.name !== undefined) {
+    const trimmed = input.name.trim();
+    if (trimmed === "") {
+      throw new DomainError("VALIDATION", "A vendor name is required.", {
+        name: ["Required"],
+      });
+    }
+    // Unique case-insensitively, excluding this vendor — renaming to your own name is a no-op,
+    // not a conflict.
+    const clash = await tx
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(
+          sql`lower(${vendors.name}) = lower(${trimmed})`,
+          sql`${vendors.id} <> ${input.vendorId}`,
+        ),
+      )
+      .limit(1);
+    if (clash.length > 0) {
+      throw new DomainError("CONFLICT", `A vendor named "${trimmed}" already exists.`, {
+        name: ["Already in use"],
+      });
+    }
+  }
+
+  const patch = {
+    name: input.name?.trim(),
+    phone: input.phone,
+    email: input.email,
+    notes: input.notes,
+  };
+
+  const changes = diffFields(existing as unknown as Record<string, unknown>, patch);
+  if (changes.length === 0) return { vendorId: input.vendorId };
+
+  await tx.update(vendors).set(patch).where(eq(vendors.id, input.vendorId));
+  await recordEditsFor(tx, actor, {
+    tableName: "vendors",
+    recordId: input.vendorId,
+    changes,
+  });
+
+  return { vendorId: input.vendorId };
+}
+
+/**
+ * Correct a quality grade's label and sort order (FR-045).
+ *
+ * `code` is deliberately absent from the input. It is the short identifier shown against historical
+ * sale lines, and changing it would silently relabel what past sales were graded as.
+ */
+export async function updateQualityGrade(
+  tx: Tx,
+  actor: Actor,
+  input: { gradeId: number; label?: string; sortOrder?: number },
+): Promise<{ gradeId: number }> {
+  const [existing] = await tx
+    .select()
+    .from(qualityGrades)
+    .where(eq(qualityGrades.id, input.gradeId))
+    .limit(1);
+  if (!existing) throw new DomainError("NOT_FOUND", "That quality grade does not exist.");
+
+  if (input.label !== undefined && input.label.trim() === "") {
+    throw new DomainError("VALIDATION", "A label is required.", { label: ["Required"] });
+  }
+
+  const patch = { label: input.label?.trim(), sortOrder: input.sortOrder };
+  const changes = diffFields(existing as unknown as Record<string, unknown>, patch);
+  if (changes.length === 0) return { gradeId: input.gradeId };
+
+  await tx.update(qualityGrades).set(patch).where(eq(qualityGrades.id, input.gradeId));
+  await recordEditsFor(tx, actor, {
+    tableName: "quality_grades",
+    recordId: input.gradeId,
+    changes,
+  });
+
+  return { gradeId: input.gradeId };
 }
 
 export async function deactivateVendor(

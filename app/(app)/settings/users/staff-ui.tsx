@@ -92,18 +92,41 @@ export function StaffForm({ action }: { action: Action }) {
   );
 }
 
+/**
+ * Generate a password in the BROWSER rather than asking the server for one.
+ *
+ * A server-generated password would have to come back in the action's return value, which means it
+ * exists in a response payload and anywhere that payload is logged. Generating it here keeps it in
+ * one place — the screen in front of the owner — and the server only ever sees its hash.
+ *
+ * The alphabet omits characters that are misread when a password is written on paper and typed in
+ * by someone else, which is exactly how this one is going to travel.
+ */
+function generatePassword(): string {
+  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint32Array(16));
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
 export function StaffList({
   staff,
   currentUserId,
   setActive,
+  updateDetails,
+  resetPassword,
 }: {
   staff: Array<{ id: string; email: string; name: string; role: string; isActive: boolean }>;
   currentUserId: string;
   setActive: Action;
+  updateDetails: Action;
+  resetPassword: Action;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ name: string; email: string }>({ name: "", email: "" });
+  const [newPassword, setNewPassword] = useState<{ userId: string; value: string } | null>(null);
 
   async function toggle(userId: string, isActive: boolean) {
     setBusy(userId);
@@ -116,6 +139,36 @@ export function StaffList({
     else setError(result.message);
   }
 
+  async function saveDetails(userId: string) {
+    setBusy(userId);
+    setError(null);
+    const result = await updateDetails(crypto.randomUUID(), {
+      userId,
+      name: draft.name,
+      email: draft.email,
+    });
+    setBusy(null);
+    if (result.ok) {
+      setEditing(null);
+      router.refresh();
+    } else {
+      setError(result.message);
+    }
+  }
+
+  async function reset(userId: string) {
+    const value = generatePassword();
+    setBusy(userId);
+    setError(null);
+    setNewPassword(null);
+    const result = await resetPassword(crypto.randomUUID(), { userId, password: value });
+    setBusy(null);
+    // Shown ONLY on success. Displaying a password the server rejected would have the owner hand
+    // over one that does not work.
+    if (result.ok) setNewPassword({ userId, value });
+    else setError(result.message);
+  }
+
   return (
     <section className="space-y-2">
       <h2 className="font-medium">Everyone with access</h2>
@@ -124,27 +177,111 @@ export function StaffList({
       ) : null}
       <ul className="divide-y rounded-lg border">
         {staff.map((person) => (
-          <li key={person.id} className="flex items-center justify-between gap-4 px-4 py-3">
-            <div className="text-sm">
-              <span className={person.isActive ? "font-medium" : "text-muted-foreground"}>
-                {person.name}
-              </span>
-              {person.id === currentUserId ? (
-                <span className="text-muted-foreground"> (you)</span>
-              ) : null}
-              <span className="text-muted-foreground block text-xs">
-                {person.email} · {person.role}
-                {person.isActive ? "" : " · deactivated"}
-              </span>
+          <li key={person.id} className="px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm">
+                <span className={person.isActive ? "font-medium" : "text-muted-foreground"}>
+                  {person.name}
+                </span>
+                {person.id === currentUserId ? (
+                  <span className="text-muted-foreground"> (you)</span>
+                ) : null}
+                <span className="text-muted-foreground block text-xs">
+                  {person.email} · {person.role}
+                  {person.isActive ? "" : " · deactivated"}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setError(null);
+                    setNewPassword(null);
+                    if (editing === person.id) {
+                      setEditing(null);
+                    } else {
+                      setEditing(person.id);
+                      setDraft({ name: person.name, email: person.email });
+                    }
+                  }}
+                >
+                  {editing === person.id ? "Cancel" : "Edit"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy === person.id}
+                  onClick={() => void toggle(person.id, !person.isActive)}
+                >
+                  {person.isActive ? "Deactivate" : "Reactivate"}
+                </Button>
+              </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy === person.id}
-              onClick={() => void toggle(person.id, !person.isActive)}
-            >
-              {person.isActive ? "Deactivate" : "Reactivate"}
-            </Button>
+
+            {editing === person.id ? (
+              <div className="mt-3 space-y-3 rounded-lg border p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label htmlFor={`name-${person.id}`} className="text-sm font-medium">
+                      Name
+                    </label>
+                    <Input
+                      id={`name-${person.id}`}
+                      value={draft.name}
+                      onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label htmlFor={`email-${person.id}`} className="text-sm font-medium">
+                      Email
+                    </label>
+                    <Input
+                      id={`email-${person.id}`}
+                      type="email"
+                      value={draft.email}
+                      onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      This is how they sign in. Changing it signs them out everywhere.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={busy === person.id}
+                    onClick={() => void saveDetails(person.id)}
+                  >
+                    {busy === person.id ? "Saving…" : "Save"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy === person.id}
+                    onClick={() => void reset(person.id)}
+                  >
+                    Reset password
+                  </Button>
+                </div>
+
+                {newPassword?.userId === person.id ? (
+                  <div
+                    role="status"
+                    className="space-y-1 rounded-md border border-green-700/40 p-3 text-sm"
+                  >
+                    <p className="font-medium">New password for {person.name}</p>
+                    <code className="block font-mono text-base select-all">
+                      {newPassword.value}
+                    </code>
+                    <p className="text-muted-foreground text-xs">
+                      Write this down now — it is not shown again, and it is stored only as a
+                      hash. Their existing sessions have been ended.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
