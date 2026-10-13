@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { SIGN_IN_REAUTH } from "@/lib/auth/reauth";
 import { getSession } from "@/lib/dal/session";
 import { SignOutButton } from "./sign-out-button";
 
@@ -31,7 +32,10 @@ export const instant = false;
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await getSession();
-  if (!user) redirect("/sign-in");
+  // SIGN_IN_REAUTH, not a bare "/sign-in": this redirect RACES the page's own session read, and
+  // whichever lands first is what the browser follows. A bare path here loses the marker that
+  // stops proxy.ts bouncing it straight back, so the loop returns through the layout.
+  if (!user) redirect(SIGN_IN_REAUTH);
 
   const isOwner = user.role === "owner";
 

@@ -128,6 +128,38 @@ integration — the default is to inherit the production URL, so this must be co
 Migrations run against `DATABASE_URL_UNPOOLED` **before** promote. `vercel rollback` reverts code
 but not schema, so use expand/contract migrations only.
 
+### Preview environments
+
+The constitution requires that **preview and production never share a database**. That is not the
+default: the Neon integration scopes one `DATABASE_URL` to production, preview *and* development.
+
+Enable per-deployment branching in **Vercel → Storage → the Neon database → Connect Project →
+Advanced Options → Deployments Configuration → toggle `Preview`**. It is dashboard-only; the CLI's
+`integration-resource connect` sets which environments receive variables, not whether branches are
+created.
+
+Two things that are easy to get wrong:
+
+- **Branches copy the parent's data by default.** Use **schema-only** branching, or every preview
+  URL becomes a shareable copy of the real books — and Vercel retains preview deployments, and
+  therefore their branches, for about six months after a pull request closes.
+- **Each branch needs its own migrations.** `scripts/preview-migrate.mjs` runs before `next build`
+  and applies them to the preview branch's direct endpoint. Production is never migrated by a
+  build; that happens in `deploy.yml`, before promotion.
+
+Two Preview-scoped variables gate that script, and they are different in kind:
+
+| Variable | Role |
+|---|---|
+| `ALLOW_PREVIEW_MIGRATIONS=1` | A human asserting branching is enabled. |
+| `PRODUCTION_DB_HOST` | The production hostname, which the script **checks** the target against. |
+
+The second exists because the first is only a promise. With branching off, a preview's
+`DATABASE_URL_UNPOOLED` *is* production's, and the flag would still read `1` — so the build would
+migrate production from an unreviewed pull request. Comparing hosts verifies what the flag merely
+claims, on every build rather than only the day it was set. The comparison ignores the port and
+treats `-pooler` as the same host, so a branch's pooled and direct endpoints are both caught.
+
 ### Cron
 
 Two jobs in `vercel.json`, both daily — **exactly at the Hobby-plan limit** (max 2 jobs, minimum

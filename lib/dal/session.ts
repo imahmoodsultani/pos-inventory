@@ -19,9 +19,11 @@ import "server-only";
  */
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import { auth } from "@/lib/auth/config";
+import { SIGN_IN_REAUTH } from "@/lib/auth/reauth";
 
 export type Role = "owner" | "salesperson";
 
@@ -81,10 +83,35 @@ export const getSession = cache(async (): Promise<SessionUser | null> => {
   };
 });
 
-/** Throws rather than returning null — use at the top of every Server Action. */
+/**
+ * The current user, or a redirect to sign-in. Use at the top of every page and Server Action.
+ *
+ * Being signed out REDIRECTS rather than throws. A stale session cookie — one that exists but no
+ * longer maps to a live session — is an ordinary state, not an exceptional one: it is what every
+ * expiry, every password reset and every email correction leaves behind, and `updateStaffDetails`
+ * creates it deliberately (FR-047). `proxy.ts` checks only that a cookie EXISTS, so the holder of
+ * a stale one sails past it and reaches the page.
+ *
+ * It cannot be left to the layout. Layouts and pages render concurrently, so the layout's redirect
+ * does not prevent the page's session read — the page throws first and the thrown error is what
+ * the user sees. The guard has to be here, where the absence is actually discovered.
+ *
+ * `redirect()` works in a Server Action too: `defineAction` calls `unstable_rethrow`, which lets
+ * Next.js control-flow errors through untouched. A signed-out caller is sent to sign-in rather
+ * than handed an inline message they cannot act on.
+ *
+ * Role failures still THROW (see `requireRole`) — a salesperson reaching an owner page is a
+ * genuine 403, not a prompt to sign in as someone else.
+ *
+ * The `reauth` marker is load-bearing, not decoration: `proxy.ts` bounces anything carrying a
+ * session cookie AWAY from /sign-in, and a stale cookie is still a cookie. Without the marker the
+ * page redirects to sign-in, the proxy redirects back, and the browser gives up with
+ * ERR_TOO_MANY_REDIRECTS. It is how the server says "I have checked the database; this cookie is
+ * dead" to a proxy that is forbidden from checking for itself.
+ */
 export async function verifySession(): Promise<SessionUser> {
   const user = await getSession();
-  if (!user) throw new UnauthenticatedError();
+  if (!user) redirect(SIGN_IN_REAUTH);
   return user;
 }
 

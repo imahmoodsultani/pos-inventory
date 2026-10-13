@@ -23,6 +23,8 @@ import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { REAUTH_PARAM } from "@/lib/auth/reauth";
+
 export function proxy(request: NextRequest): NextResponse {
   const hasSessionCookie = getSessionCookie(request);
   const { pathname, search } = request.nextUrl;
@@ -35,7 +37,12 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.redirect(signIn);
   }
 
-  if (hasSessionCookie && isSignIn) {
+  // Bouncing a signed-in visitor off the sign-in form is a convenience. It must NOT override the
+  // server having already established that this cookie is dead — only the server can know that,
+  // since this file is forbidden from touching the database. Without the `reauth` exemption the
+  // two redirects fight: page → /sign-in, proxy → /, forever.
+  const isReauth = request.nextUrl.searchParams.has(REAUTH_PARAM);
+  if (hasSessionCookie && isSignIn && !isReauth) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
